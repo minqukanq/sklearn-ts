@@ -1,7 +1,9 @@
-import numpy as np
+import inspect
+
 import torch
 import torch.nn as nn
-from dataset import split_sequences
+from dataset import SlidingWindowTransformer
+from sklearn.pipeline import Pipeline
 from skorch import NeuralNetRegressor
 from skorch.utils import is_dataset
 from training_arguments import TrainingArguments
@@ -22,32 +24,34 @@ class LSTMForecaster(NeuralNetRegressor):
             ),
             **training_args.__dict__
         )
-        self.seq_len = window_size
-        self.pred_len = forecast_size
 
-    def fit(self, X, y=None, sliding_steps=1, **fit_params):
-        self.sliding_steps = sliding_steps
-
+    def fit(self, X, y=None, **fit_params):
         if not is_dataset(X):
-            X, y = split_sequences(
-                features=X.values if not isinstance(X, np.ndarray) else X,
-                targets=y.values if not isinstance(y, np.ndarray) else y,
-                window_size=self.seq_len,
-                forecast_size=self.pred_len,
-                sliding_steps=sliding_steps,
-            )
+            if y is None:
+                raise ValueError('X가 Dataset이 아닐 경우, y는 None이 될 수 없습니다.')
+
+            caller_frame = inspect.stack()[1][0]
+            caller_locals = caller_frame.f_locals
+            if 'self' in caller_locals and isinstance(caller_locals['self'], Pipeline):
+                for name, transformer in caller_locals['self'].steps:
+                    if isinstance(transformer, SlidingWindowTransformer):
+                        X, y = X[0], X[1]
+                        break
+
             X = self.get_dataset(X, y)
 
-        super().fit(X=X, y=None, **fit_params)
+        return super().fit(X=X, y=None, **fit_params)
 
     def predict(self, X):
-        X, _ = split_sequences(
-            features=X.values if not isinstance(X, np.ndarray) else X,
-            targets=None,
-            window_size=self.seq_len,
-            forecast_size=self.pred_len,
-            sliding_steps=self.sliding_steps,
-        )
+        if not is_dataset(X):
+            caller_frame = inspect.stack()[1][0]
+            caller_locals = caller_frame.f_locals
+            if 'self' in caller_locals and isinstance(caller_locals['self'], Pipeline):
+                for name, transformer in caller_locals['self'].steps:
+                    if isinstance(transformer, SlidingWindowTransformer):
+                        X, y = X[0], X[1]
+                        break
+
         return super().predict(X)
 
 
